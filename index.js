@@ -14,7 +14,8 @@ const {
   StreamType
 } = require("@discordjs/voice");
 
-const { Innertube } = require("youtubei.js");
+const { spawn } = require("child_process");
+const youtubedl = require("youtube-dl-exec");
 
 const client = new Client({
   intents: [
@@ -26,13 +27,17 @@ const client = new Client({
 });
 
 let connection;
-let youtube;
+let currentProcess = null;
 
 const player = createAudioPlayer({
   behaviors: {
     noSubscriber: NoSubscriberBehavior.Play
   }
 });
+
+// ==============================
+// AFK + AUTO RECONNECT
+// ==============================
 
 async function connectToVoice() {
   try {
@@ -65,7 +70,7 @@ async function connectToVoice() {
     connection.on(
       VoiceConnectionStatus.Disconnected,
       async () => {
-        console.log("Disconnected. Trying to reconnect...");
+        console.log("Disconnected. Reconnecting...");
 
         try {
           await Promise.race([
@@ -85,9 +90,7 @@ async function connectToVoice() {
             connection.destroy();
           } catch {}
 
-          setTimeout(() => {
-            connectToVoice();
-          }, 5000);
+          setTimeout(connectToVoice, 5000);
         }
       }
     );
@@ -102,66 +105,90 @@ async function connectToVoice() {
 
     console.log(`JHAYBOT joined: ${channel.name}`);
   } catch (error) {
-    console.error("Voice connection error:", error);
+    console.error("VOICE ERROR:", error);
 
-    setTimeout(() => {
-      connectToVoice();
-    }, 5000);
+    setTimeout(connectToVoice, 5000);
   }
 }
 
-function getVideoId(input) {
-  try {
-    const url = new URL(input);
-
-    if (url.hostname.includes("youtu.be")) {
-      return url.pathname.slice(1);
-    }
-
-    return url.searchParams.get("v");
-  } catch {
-    return input;
-  }
-}
+// ==============================
+// MUSIC
+// ==============================
 
 async function playSong(query, message) {
   try {
-    let videoId;
-    let title;
+    await message.reply("🔎 Searching/Loading...");
 
-    if (
-      query.includes("youtube.com") ||
-      query.includes("youtu.be")
-    ) {
-      videoId = getVideoId(query);
+    // Search by name OR accept YouTube URL
+    const target =
+      query.startsWith("http://") ||
+      query.startsWith("https://")
+        ? query
+        : `ytsearch1:${query}`;
 
-      const info = await youtube.getInfo(videoId);
-      title = info.basic_info.title || "YouTube Video";
-    } else {
-      const search = await youtube.search(query, {
-        type: "video"
-      });
+    // Get song information first
+    const info = await youtubedl(target, {
+      dumpSingleJson: true,
+      noWarnings: true,
+      noPlaylist: true
+    });
 
-      const video = search.videos[0];
+    let video = info;
 
-      if (!video) {
-        await message.reply("❌ Walang nahanap na kanta.");
-        return;
-      }
-
-      videoId = video.id;
-      title = video.title.text || video.title;
+    if (info.entries && info.entries.length > 0) {
+      video = info.entries[0];
     }
 
-    await message.reply(`🎵 Playing: **${title}**`);
+    if (!video || !video.webpage_url) {
+      throw new Error("Walang valid YouTube video na nahanap.");
+    }
 
-    const stream = await youtube.download(videoId, {
-      type: "audio",
-      quality: "best"
+    const url = video.webpage_url;
+    const title = video.title || "Unknown title";
+
+    // Stop old yt-dlp process
+    if (currentProcess) {
+      try {
+        currentProcess.kill();
+      } catch {}
+
+      currentProcess = null;
+    }
+
+    // Stream audio through yt-dlp stdout
+    currentProcess = spawn(
+      youtubedl.raw,
+      [
+        url,
+        "-f",
+        "bestaudio",
+        "-o",
+        "-",
+        "--no-playlist",
+        "--no-warnings",
+        "--quiet"
+      ],
+      {
+        stdio: ["ignore", "pipe", "pipe"]
+      }
+    );
+
+    currentProcess.stderr.on("data", (data) => {
+      console.log(
+        "YT-DLP:",
+        data.toString()
+      );
+    });
+
+    currentProcess.on("error", (error) => {
+      console.error(
+        "YT-DLP PROCESS ERROR:",
+        error
+      );
     });
 
     const resource = createAudioResource(
-      stream,
+      currentProcess.stdout,
       {
         inputType: StreamType.Arbitrary
       }
@@ -172,6 +199,10 @@ async function playSong(query, message) {
     if (connection) {
       connection.subscribe(player);
     }
+
+    await message.reply(
+      `🎵 Playing: **${title}**`
+    );
   } catch (error) {
     console.error("PLAY ERROR:", error);
 
@@ -181,25 +212,35 @@ async function playSong(query, message) {
   }
 }
 
-client.once("ready", async () => {
-  console.log(`JHAYBOT ONLINE: ${client.user.tag}`);
+// ==============================
+// BOT READY
+// ==============================
 
-  youtube = await Innertube.create();
+client.once("ready", () => {
+  console.log(
+    `JHAYBOT ONLINE: ${client.user.tag}`
+  );
 
   connectToVoice();
 });
+
+// ==============================
+// COMMANDS
+// ==============================
 
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
 
   const content = message.content.trim();
 
-  if (content.toLowerCase().startsWith("!play ")) {
+  if (
+    content.toLowerCase().startsWith("!play ")
+  ) {
     const query = content.slice(6).trim();
 
     if (!query) {
       await message.reply(
-        "❌ Gamitin: `!play pangalan ng kanta`"
+        "❌ Gamitin: `!play pangalan/link`"
       );
       return;
     }
@@ -208,29 +249,39 @@ client.on("messageCreate", async (message) => {
   }
 
   if (content.toLowerCase() === "!pause") {
-    const paused = player.pause();
+    const result = player.pause();
 
     await message.reply(
-      paused
+      result
         ? "⏸️ Paused."
-        : "❌ Walang music na naka-play."
+        : "❌ Walang music."
     );
   }
 
   if (content.toLowerCase() === "!resume") {
-    const resumed = player.unpause();
+    const result = player.unpause();
 
     await message.reply(
-      resumed
+      result
         ? "▶️ Resumed."
-        : "❌ Walang naka-pause na music."
+        : "❌ Walang naka-pause."
     );
   }
 
   if (content.toLowerCase() === "!stop") {
     player.stop();
 
-    await message.reply("⏹️ Music stopped.");
+    if (currentProcess) {
+      try {
+        currentProcess.kill();
+      } catch {}
+
+      currentProcess = null;
+    }
+
+    await message.reply(
+      "⏹️ Music stopped."
+    );
   }
 
   if (content.toLowerCase() === "!help") {
@@ -245,16 +296,31 @@ client.on("messageCreate", async (message) => {
   }
 });
 
+// ==============================
+// PLAYER EVENTS
+// ==============================
+
 player.on(AudioPlayerStatus.Playing, () => {
   console.log("Music is playing.");
 });
 
 player.on(AudioPlayerStatus.Idle, () => {
   console.log("Music finished.");
+
+  if (currentProcess) {
+    try {
+      currentProcess.kill();
+    } catch {}
+
+    currentProcess = null;
+  }
 });
 
 player.on("error", (error) => {
-  console.error("Audio player error:", error);
+  console.error(
+    "AUDIO PLAYER ERROR:",
+    error
+  );
 });
 
 client.login(process.env.TOKEN);
