@@ -157,7 +157,7 @@ async function playSong(query, message) {
 
     // Stream audio through yt-dlp stdout
     currentProcess = spawn(
-      youtubedl.raw,
+  "/app/node_modules/youtube-dl-exec/bin/yt-dlp",
       [
         url,
         "-f",
