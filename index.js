@@ -10,10 +10,11 @@ const {
   AudioPlayerStatus,
   VoiceConnectionStatus,
   entersState,
-  NoSubscriberBehavior
+  NoSubscriberBehavior,
+  StreamType
 } = require("@discordjs/voice");
 
-const play = require("play-dl");
+const { Innertube } = require("youtubei.js");
 
 const client = new Client({
   intents: [
@@ -25,6 +26,7 @@ const client = new Client({
 });
 
 let connection;
+let youtube;
 
 const player = createAudioPlayer({
   behaviors: {
@@ -108,40 +110,60 @@ async function connectToVoice() {
   }
 }
 
+function getVideoId(input) {
+  try {
+    const url = new URL(input);
+
+    if (url.hostname.includes("youtu.be")) {
+      return url.pathname.slice(1);
+    }
+
+    return url.searchParams.get("v");
+  } catch {
+    return input;
+  }
+}
+
 async function playSong(query, message) {
   try {
-    let url = query;
+    let videoId;
+    let title;
 
-    const validation = play.yt_validate(query);
+    if (
+      query.includes("youtube.com") ||
+      query.includes("youtu.be")
+    ) {
+      videoId = getVideoId(query);
 
-    if (validation !== "video") {
-      const results = await play.search(query, {
-        limit: 1,
-        source: {
-          youtube: "video"
-        }
+      const info = await youtube.getInfo(videoId);
+      title = info.basic_info.title || "YouTube Video";
+    } else {
+      const search = await youtube.search(query, {
+        type: "video"
       });
 
-      if (!results.length) {
+      const video = search.videos[0];
+
+      if (!video) {
         await message.reply("❌ Walang nahanap na kanta.");
         return;
       }
 
-      url = results[0].url;
-
-      await message.reply(
-        `🎵 Playing: **${results[0].title}**`
-      );
-    } else {
-      await message.reply("🎵 Loading music...");
+      videoId = video.id;
+      title = video.title.text || video.title;
     }
 
-    const stream = await play.stream(url);
+    await message.reply(`🎵 Playing: **${title}**`);
+
+    const stream = await youtube.download(videoId, {
+      type: "audio",
+      quality: "best"
+    });
 
     const resource = createAudioResource(
-      stream.stream,
+      stream,
       {
-        inputType: stream.type
+        inputType: StreamType.Arbitrary
       }
     );
 
@@ -159,8 +181,10 @@ async function playSong(query, message) {
   }
 }
 
-client.once("ready", () => {
+client.once("ready", async () => {
   console.log(`JHAYBOT ONLINE: ${client.user.tag}`);
+
+  youtube = await Innertube.create();
 
   connectToVoice();
 });
