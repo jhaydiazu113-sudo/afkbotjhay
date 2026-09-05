@@ -119,17 +119,17 @@ client.on("messageCreate", async (message) => {
 
   if (message.author.bot) return;
 
-  if (!message.content.toLowerCase().startsWith("!answer")) {
+  if (!message.content.toLowerCase().startsWith("!question")) {
     return;
   }
 
   const question = message.content
-    .slice("!answer".length)
+    .slice("!question".length)
     .trim();
 
   if (!question) {
     return message.reply(
-      "❓ Gamitin: `!answer <question>`"
+      "❓ Gamitin: `!question <question>`"
     );
   }
 
@@ -148,7 +148,7 @@ client.on("messageCreate", async (message) => {
 
     const answer = response.text;
 
-    if (!answer) {
+    if (!question) {
       return message.reply(
         "❌ No answer was formed."
       );
