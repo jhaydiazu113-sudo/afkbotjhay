@@ -168,7 +168,7 @@ client.on("messageCreate", async (message) => {
     console.error("GEMINI ERROR:", error);
 
     await message.reply(
-      "❌ May error habang kumokonekta sa Gemini AI."
+      "❗Something went wrong, please try again."
     );
   }
 });
