@@ -150,7 +150,7 @@ client.on("messageCreate", async (message) => {
 
     if (!answer) {
       return message.reply(
-        "❌ Walang nabuong sagot."
+        "❌ No answer was formed."
       );
     }
 
